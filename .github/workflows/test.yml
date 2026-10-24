@@ -1,0 +1,59 @@
+name: Test skill snippets
+
+# Runs every ```python block in blender/references/*.md, the boilerplate demo and
+# all lighting presets against real Blender builds (the pip `bpy` module), so API
+# drift between Blender releases breaks CI instead of breaking Claude's output.
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"   # weekly: catches new bpy releases
+
+jobs:
+  snippets:
+    name: ${{ matrix.os }} / Blender ${{ matrix.blender }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Tests render with Cycles on the CPU, so no GPU is needed on any runner.
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+        blender: ["5.0.1", "5.2.3"]
+        include:
+          - blender: "5.0.1"
+            python: "3.11"
+          - blender: "5.2.3"
+            python: "3.13"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: System libraries for bpy
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libegl1 libx11-6 libxext6 libxfixes3 libxi6 libxrender1 \
+            libxkbcommon0 libsm6 libice6
+      - name: Install Blender ${{ matrix.blender }} as a Python module
+        shell: bash
+        run: pip install "bpy==${{ matrix.blender }}"
+      - name: Run reference snippets
+        shell: bash
+        run: python tests/run_snippets.py
+      - name: Check lighting preset calibration
+        shell: bash
+        run: python tests/test_lighting_presets.py
+      - name: Run boilerplate demo (render + QA)
+        shell: bash   # bash shell = -eo pipefail, so a crash isn't hidden by tee (Git Bash on Windows)
+        run: |
+          python blender/scripts/boilerplate.py -- --out "$RUNNER_TEMP/boilerplate.png" | tee bp.log
+          grep -q "'warnings': \[\]" bp.log
+      - name: Upload renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renders-${{ matrix.os }}-${{ matrix.blender }}
+          path: ${{ runner.temp }}/*.png
