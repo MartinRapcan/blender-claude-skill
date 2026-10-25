@@ -29,6 +29,12 @@ between Blender releases.
 - **Rendering & export** — Cycles vs EEVEE (with GPU detection), the 5.x
   node-group compositor, cameras that frame the subject without cropping, and
   export to glTF / FBX / OBJ / STL / USD / PLY.
+- **High detail & reference images** — a workflow for matching a reference
+  with any subject (breakdown, detail budget, blockout, three scales of
+  detail, compare and iterate) and `detail_kit.py`: panel seams and greebles on
+  any mesh, surface scattering, rocks, cables, merged builders, weathered
+  materials (chipped paint, metal, concrete, wood, stone), plus facade cells
+  for architecture.
 - **Self-checking renders** — `verify_render()` flags black, blown-out, flat,
   empty or cropped images; `render_views()` makes a 4-angle contact sheet so
   holes and flipped normals can't hide.
@@ -53,9 +59,11 @@ blender/                       # the skill itself (this folder gets installed)
 │   ├── animation.md           # keyframes, slotted actions, drivers, rigging
 │   ├── rendering.md           # engines, compositor, cameras, export
 │   ├── objects_2d.md          # curves, text, Grease Pencil v3, sprites, SVG
+│   ├── detailing.md           # high detail for any subject, reference images
 │   └── gotchas.md             # 4.x -> 5.x breakages, footguns, checklist
 └── scripts/
     ├── boilerplate.py         # clean scene, framing camera, render + QA, contact sheet
+    ├── detail_kit.py          # panel lines, greebles, scatter, rocks, materials, facades
     └── lighting_presets.py    # size-aware lighting presets + auto-exposure
 tests/                         # not part of the skill
 ├── run_snippets.py            # executes every python block in references/

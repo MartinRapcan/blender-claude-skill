@@ -7,7 +7,9 @@ description: >-
   text; build or assign materials and textures; UV unwrap; set up lighting or an
   HDRI environment; rig, keyframe, or animate; or render stills and animations —
   even if the user does not say the word "Blender" but clearly wants a 3D model,
-  a rendered image, a procedural scene, or a 3D asset exported as glTF/FBX/OBJ/STL.
+  a rendered image, a procedural scene, or a 3D asset exported as glTF/FBX/OBJ/STL,
+  and when they ask for a detailed or realistic model or a scene matching a
+  reference image.
   Trigger this to get clean, watertight, correctly-joined geometry with proper
   normals, PBR materials, good lighting, and working animation instead of fragile
   bpy.ops-based code that breaks headless.
@@ -60,6 +62,15 @@ override is not enough. Use `boilerplate.edit_mode(obj)`, or set
 `mode_set(mode="EDIT")` (see `references/gotchas.md`).
 
 ## Standard workflow
+
+If the user wants something **detailed or realistic**, or attaches a
+**reference image**, read `references/detailing.md` first: it adds a breakdown
+of the reference, a detail budget, a blockout render, three scales of detail
+and a compare-and-iterate loop on top of the steps below, for any subject
+(machines, vehicles, props, rocks, buildings). `scripts/detail_kit.py`
+provides the parts: panel lines and greebles on any mesh, surface scattering,
+rocks, cables, merged builders, weathered materials. Never answer "detailed"
+with primitives and flat colours.
 
 1. **Target Blender 5.x and check the version.** This skill is written and
    tested for 5.0–5.2. Most examples online (and in training data) are 3.x/4.x
@@ -189,6 +200,10 @@ Read the one(s) relevant to the task — don't load all of them by default:
   output formats, rendering stills vs animation, cameras, exporting glTF/FBX/etc.
 - `references/objects_2d.md` — 2D work: bezier/NURBS curves, filled shapes, text
   objects, the Grease Pencil (v3), logos/SVG, and 2D-in-3D compositions.
+- `references/detailing.md` — high-detail modelling of any subject and working
+  from a reference image: breakdown table, detail budget, blockout → secondary
+  → tertiary detail, rules, techniques per subject (hard-surface, buildings,
+  rocks/terrain, wood props), worked examples, calibration tables, mistakes.
 - `references/gotchas.md` — table of 4.x code that breaks on 5.x and its
   replacement, runtime API discovery, headless flags, footguns, final checklist.
 
@@ -197,6 +212,12 @@ Read the one(s) relevant to the task — don't load all of them by default:
   `add_ground`, `add_default_lighting`, `setup_render` (+ GPU detection),
   `render_still`, `render_views` (contact sheet), `report_scene`,
   `verify_render`. Start here for almost every task.
+- `scripts/detail_kit.py` — general: `MeshBuilder` (thousands of parts merged
+  per material), `subdivide`, `panel_lines` (seams on any mesh), `greeble`,
+  `scatter_instances`, `rock`, `cable`, `apply_modifiers`; materials
+  (`worn_paint`, `panel_metal`, `concrete`, `wood`, `rock_material`, `glass`,
+  `wet_asphalt`, `emissive`, `interior`); architecture example: `Face`,
+  footprints, `FacadeKit`, `facade_segment`, `mech_floor`, `city_windows`.
 - `scripts/lighting_presets.py` — size-aware lighting presets, world helpers
   (flat colour, physical sky, HDRI), view settings and `balance_exposure()`.
   Import it (or copy it next to the scene script) for any task that renders.
