@@ -63,14 +63,22 @@ override is not enough. Use `boilerplate.edit_mode(obj)`, or set
 
 ## Standard workflow
 
-If the user wants something **detailed or realistic**, or attaches a
-**reference image**, read `references/detailing.md` first: it adds a breakdown
-of the reference, a detail budget, a blockout render, three scales of detail
-and a compare-and-iterate loop on top of the steps below, for any subject
-(machines, vehicles, props, rocks, buildings). `scripts/detail_kit.py`
-provides the parts: panel lines and greebles on any mesh, surface scattering,
-rocks, cables, merged builders, weathered materials. Never answer "detailed"
-with primitives and flat colours.
+Two references change HOW you build; read them before writing geometry:
+
+- **Anything made of several parts that must meet** (a building with windows,
+  a street, an interior, a vehicle, a machine): read `references/assembly.md`.
+  Build by attachment with `scripts/assembly.py` (a child is placed in a
+  `Frame` taken from its parent and sinks slightly into it; a hole belongs to
+  the parent and its filling is fitted into that hole) and run
+  `assembly.audit()` before rendering. `scripts/architecture.py` adds walls
+  with openings, windows and facades on top of it.
+  Typing world coordinates for each part separately is what produces windows
+  that float off their walls, misaligned rows and layers that never connect.
+- **Detailed / realistic results or a reference image**: read
+  `references/detailing.md` (breakdown of the reference, detail budget,
+  blockout render, three scales of detail, compare and iterate) and use
+  `scripts/detail_kit.py`. Never answer "detailed" with primitives and flat
+  colours.
 
 1. **Target Blender 5.x and check the version.** This skill is written and
    tested for 5.0–5.2. Most examples online (and in training data) are 3.x/4.x
@@ -97,6 +105,10 @@ with primitives and flat colours.
    (grouped but separate). Wrong choice here is the #1 cause of "it looks broken".
    Give hard-surface objects a small Bevel modifier (geometry.md §4): razor-sharp
    edges are the most common reason a model reads as cheap CG.
+
+   For multi-part models: constants for the module sizes first, then build by
+   attachment (`assembly.md`), and finish with `assembly.audit()`: **zero
+   detached parts, zero z-fighting, zero inverted parts** before any render.
 
 4. **Materials & UVs** per `references/materials.md`: node-based Principled BSDF,
    proper UV unwrap before image textures, correct color space (sRGB for base
@@ -177,6 +189,8 @@ Never fabricate a render you didn't produce.
 | `'Action' object has no attribute 'fcurves'` | Slotted actions; use the channelbag helper (animation.md §2) |
 | `'Scene' object has no attribute 'node_tree'` | 5.x compositor is `scene.compositing_node_group` (rendering.md §5) |
 | Subject cut off at frame edge | Hand-placed camera; use `add_framing_camera()` |
+| Windows/signs float off the wall, rows misaligned, parts don't connect | Parts placed with separately typed coordinates; build on Frames and run `assembly.audit()` (assembly.md) |
+| Flickering/striped surface where two parts meet | Coplanar faces (z-fighting); audit lists them; change one depth |
 | `StructRNA has been removed` | Held a stale reference after data was reallocated |
 | Washed-out/overexposed render | Wrong view transform or exposure; light power too high |
 
@@ -200,6 +214,11 @@ Read the one(s) relevant to the task — don't load all of them by default:
   output formats, rendering stills vs animation, cameras, exporting glTF/FBX/etc.
 - `references/objects_2d.md` — 2D work: bezier/NURBS curves, filled shapes, text
   objects, the Grease Pencil (v3), logos/SVG, and 2D-in-3D compositions.
+- `references/assembly.md` — building anything whose parts must meet: Frames
+  (local coordinates on a parent), `block` and its face frames, layout helpers
+  (`stack`/`grid`/`columns`), `audit()` (detached parts, z-fighting, inverted
+  normals) with a fix table; section 4 covers walls with real openings,
+  windows, doors and rooms (`architecture.py`).
 - `references/detailing.md` — high-detail modelling of any subject and working
   from a reference image: breakdown table, detail budget, blockout → secondary
   → tertiary detail, rules, techniques per subject (hard-surface, buildings,
@@ -212,12 +231,19 @@ Read the one(s) relevant to the task — don't load all of them by default:
   `add_ground`, `add_default_lighting`, `setup_render` (+ GPU detection),
   `render_still`, `render_views` (contact sheet), `report_scene`,
   `verify_render`. Start here for almost every task.
+- `scripts/assembly.py` — subject-agnostic: `Frame`, `block`/`Block`, `rod`,
+  `outline`, `text_on`, `stack`, `footprint_walls`, `offset_polygon`, `audit`.
+- `scripts/architecture.py` — buildings only: `wall`, `shell`, `Opening`,
+  `window`, `plug`, `room`, `rect`, `octagon`, `FacadeKit`, `facade_segment`,
+  `mech_floor`.
+- `examples/neon_street.py` — full worked example: a night street of 20
+  buildings, ~6,000 attached parts, clean audit. Read it before building a
+  multi-building scene.
 - `scripts/detail_kit.py` — general: `MeshBuilder` (thousands of parts merged
   per material), `subdivide`, `panel_lines` (seams on any mesh), `greeble`,
   `scatter_instances`, `rock`, `cable`, `apply_modifiers`; materials
   (`worn_paint`, `panel_metal`, `concrete`, `wood`, `rock_material`, `glass`,
-  `wet_asphalt`, `emissive`, `interior`); architecture example: `Face`,
-  footprints, `FacadeKit`, `facade_segment`, `mech_floor`, `city_windows`.
+  `wet_asphalt`, `emissive`, `interior`, `city_windows`).
 - `scripts/lighting_presets.py` — size-aware lighting presets, world helpers
   (flat colour, physical sky, HDRI), view settings and `balance_exposure()`.
   Import it (or copy it next to the scene script) for any task that renders.

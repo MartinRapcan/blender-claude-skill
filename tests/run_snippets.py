@@ -39,6 +39,8 @@ sys.path.insert(0, os.path.join(SKILL, "scripts"))
 TMP = tempfile.mkdtemp(prefix="blender_skill_test_")
 
 # Blocks that cannot run headless/in isolation; key = (file, block number).
+FRESH_EACH = {"assembly.md", "detailing.md"}   # every block audits the whole scene: start each one empty
+
 SKIP = {
     ("animation.md", 8): "renders a whole animation (slow); single-frame rendering is covered",
 }
@@ -194,7 +196,11 @@ def main():
                 skipped += 1
                 continue
             total += 1
-            ns = fresh_namespace() if ns is None or "bpy.data.objects[" in code or i == 1 else ns
+            fresh = ns is None or "bpy.data.objects[" in code or i == 1 or fname in FRESH_EACH
+            ns = fresh_namespace() if fresh else ns
+            if fname in FRESH_EACH:      # no fixture objects: the audit must see only the snippet's parts
+                for o in list(bpy.data.objects):
+                    bpy.data.objects.remove(o, do_unlink=True)
             try:
                 run_block(code, f"{fname}#{i}", ns)
                 print(f"  ok    {fname} #{i}")

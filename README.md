@@ -29,12 +29,18 @@ between Blender releases.
 - **Rendering & export** — Cycles vs EEVEE (with GPU detection), the 5.x
   node-group compositor, cameras that frame the subject without cropping, and
   export to glTF / FBX / OBJ / STL / USD / PLY.
+- **Parts that actually meet** — `assembly.py` builds by attachment: a child is
+  placed in a Frame taken from its parent (any subject), and `audit()` reports every floating part,
+  visible coplanar overlap (z-fighting) and inside-out mesh before rendering.
+  No more windows hovering in front of walls or layers that never connect.
 - **High detail & reference images** — a workflow for matching a reference
   with any subject (breakdown, detail budget, blockout, three scales of
   detail, compare and iterate) and `detail_kit.py`: panel seams and greebles on
   any mesh, surface scattering, rocks, cables, merged builders, weathered
-  materials (chipped paint, metal, concrete, wood, stone), plus facade cells
-  for architecture.
+  materials (chipped paint, metal, concrete, wood, stone).
+- **Architecture** — `architecture.py`: walls built with their openings and
+  mitred corners, windows/doors/rooms fitted into the openings, and
+  `FacadeKit` for panelised facades. Everything it builds passes the audit.
 - **Self-checking renders** — `verify_render()` flags black, blown-out, flat,
   empty or cropped images; `render_views()` makes a 4-angle contact sheet so
   holes and flipped normals can't hide.
@@ -59,15 +65,21 @@ blender/                       # the skill itself (this folder gets installed)
 │   ├── animation.md           # keyframes, slotted actions, drivers, rigging
 │   ├── rendering.md           # engines, compositor, cameras, export
 │   ├── objects_2d.md          # curves, text, Grease Pencil v3, sprites, SVG
+│   ├── assembly.md            # build by attachment, walls with openings, audit
 │   ├── detailing.md           # high detail for any subject, reference images
 │   └── gotchas.md             # 4.x -> 5.x breakages, footguns, checklist
+├── examples/
+│   └── neon_street.py         # worked example: 20 buildings, ~6,000 attached parts
 └── scripts/
+    ├── assembly.py            # any subject: Frame, block, rod, layout, audit
+    ├── architecture.py        # buildings: wall/shell, window, room, FacadeKit
     ├── boilerplate.py         # clean scene, framing camera, render + QA, contact sheet
-    ├── detail_kit.py          # panel lines, greebles, scatter, rocks, materials, facades
+    ├── detail_kit.py          # panel lines, greebles, scatter, rocks, materials
     └── lighting_presets.py    # size-aware lighting presets + auto-exposure
 tests/                         # not part of the skill
 ├── run_snippets.py            # executes every python block in references/
-└── test_lighting_presets.py   # checks preset exposure + scale independence
+├── test_lighting_presets.py   # checks preset exposure + scale independence
+└── test_assembly.py           # attachment, mitred walls, audit catches broken scenes
 .github/workflows/test.yml     # runs both tests on Blender 5.0 and 5.2
 ```
 
@@ -105,6 +117,7 @@ Zip the `blender/` folder and upload it via **Settings → Capabilities → Skil
 python3.13 -m venv .venv && .venv/bin/pip install bpy==5.2.3
 .venv/bin/python tests/run_snippets.py          # every code block in references/
 .venv/bin/python tests/test_lighting_presets.py # preset calibration
+.venv/bin/python tests/test_assembly.py         # attachment + audit
 ```
 For Blender 5.0 use Python 3.11 and `bpy==5.0.1`. CI runs both on every push
 and weekly.

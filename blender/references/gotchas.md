@@ -93,6 +93,12 @@ blender -b --factory-startup --python-exit-code 1 -P scene.py -- --out /tmp/out.
 - **`view_layer.objects` is stale** right after linking/removing objects (it can
   contain `None`). Call `bpy.context.view_layer.update()` first, or iterate
   `scene.objects` instead.
+- **Mirrored matrices turn meshes inside-out.** A basis like (along, outward,
+  up) on a wall is left-handed (determinant −1); `bmesh.ops.create_cube(matrix=)`
+  with it, or any negative scale, flips every normal. Shading looks fine in
+  Cycles but bevels, booleans and exports break. Reverse the faces when
+  `matrix.determinant() < 0` (`MeshBuilder.box` does); `assembly.audit()`
+  reports such parts as INVERTED.
 - **`bpy.context.collection` can be `None`** (e.g. after deleting collections).
   Link new objects to `bpy.context.scene.collection`, which always exists.
 - **EEVEE without a GPU** runs in software and can be slower than Cycles on CPU.
@@ -105,6 +111,7 @@ blender -b --factory-startup --python-exit-code 1 -P scene.py -- --out /tmp/out.
 - [ ] Scene cleaned of the default cube/camera/light.
 - [ ] Every object linked to a collection.
 - [ ] Coincident verts merged; normals recalculated outward.
+- [ ] Multi-part model: `assembly.audit()` reports 0 detached, 0 z-fight, 0 inverted.
 - [ ] Hard-surface edges bevelled (a small Bevel modifier); organic shapes smooth.
 - [ ] Materials use correct color spaces; textures packed (no pink).
 - [ ] Lighting from a preset or scaled to subject size; ground for contact shadows.

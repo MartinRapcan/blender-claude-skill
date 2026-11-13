@@ -15,9 +15,8 @@ General tools (machines, vehicles, props, rocks, terrain, sci-fi, buildings):
 - Material recipes with variation and wear: worn_paint, panel_metal,
   concrete, wood, rock_material, glass, wet_asphalt, emissive, interior.
 
-Architecture example tools (one use case, not the only one):
-- Face, footprints (rect/octagon/inset), FacadeKit cells, facade_segment,
-  mech_floor, city_windows.
+Attachment and the contact audit are in assembly.py; walls, windows and
+facades (FacadeKit) are in architecture.py.
 
     import sys; sys.path.insert(0, "/path/to/skill/blender/scripts")
     import detail_kit as dk
@@ -29,6 +28,8 @@ import random
 import bpy  # before bmesh / mathutils with the pip `bpy` module
 import bmesh
 from mathutils import Matrix, Vector
+
+import assembly as asm  # frames, attachment, audit (same folder)
 
 Z = Vector((0, 0, 1))
 
@@ -42,14 +43,22 @@ class MeshBuilder:
         self.collection = collection
         self.bm = bmesh.new()
         self.count = 0
+        self.tag = None      # label for the parts added next (shown by assembly.audit)
+        self._parts = []     # (first vertex index, label) per part
+
+    def _mark(self):
+        self._parts.append((len(self.bm.verts), self.tag))
 
     def box(self, center, size, basis=None):
-        """Box of `size` (x, y, z) at `center`; `basis` = 3x3 rotation (e.g. Face.basis)."""
+        """Box of `size` (x, y, z) at `center`; `basis` = 3x3 rotation (e.g. Frame.basis)."""
         m = Matrix.Translation(center)
         if basis is not None:
             m = m @ basis.to_4x4()
         m = m @ Matrix.Diagonal((size[0], size[1], size[2], 1.0))
-        bmesh.ops.create_cube(self.bm, size=1.0, matrix=m)
+        self._mark()
+        made = bmesh.ops.create_cube(self.bm, size=1.0, matrix=m)
+        if m.determinant() < 0:   # mirrored basis (e.g. a wall frame) turns the box inside out
+            bmesh.ops.reverse_faces(self.bm, faces=list({f for v in made["verts"] for f in v.link_faces}))
         self.count += 1
 
     def cyl(self, p0, p1, radius, segments=12, caps=True):
@@ -57,6 +66,7 @@ class MeshBuilder:
         p0, p1 = Vector(p0), Vector(p1)
         d = p1 - p0
         rot = Z.rotation_difference(d.normalized()).to_matrix().to_4x4()
+        self._mark()
         bmesh.ops.create_cone(self.bm, cap_ends=caps, segments=segments, radius1=radius,
                               radius2=radius, depth=d.length,
                               matrix=Matrix.Translation((p0 + p1) / 2) @ rot)
@@ -64,12 +74,14 @@ class MeshBuilder:
 
     def dot(self, center, radius):
         """Small sphere: light points, rivets, bolts."""
+        self._mark()
         bmesh.ops.create_icosphere(self.bm, subdivisions=1, radius=radius,
                                    matrix=Matrix.Translation(center))
         self.count += 1
 
     def prism(self, polygon, z0, z1):
         """Closed vertical prism from a CCW 2D polygon (cores, slabs, plinths)."""
+        self._mark()
         bot = [self.bm.verts.new((x, y, z0)) for x, y in polygon]
         top = [self.bm.verts.new((x, y, z1)) for x, y in polygon]
         self.bm.faces.new(list(reversed(bot)))
@@ -89,6 +101,11 @@ class MeshBuilder:
         self.bm.free()
         for p in me.polygons:
             p.use_smooth = True
+        if self.bevel <= 0 and hasattr(me, "set_sharp_from_angle"):
+            me.set_sharp_from_angle(angle=math.radians(40))   # round parts smooth, boxes crisp
+        if any(label for _, label in self._parts):
+            import json
+            me["dk_parts"] = json.dumps(self._parts)
         obj = bpy.data.objects.new(self.name, me)
         (self.collection or bpy.context.scene.collection).objects.link(obj)
         me.materials.append(self.material)
@@ -99,66 +116,6 @@ class MeshBuilder:
             bev.limit_method = "ANGLE"
             bev.harden_normals = True
         return obj
-
-
-class Face:
-    """Local frame on a vertical wall from 2D points a -> b (CCW footprint order).
-
-    at(s, t, d): s metres along the wall from a, t metres up from z0,
-    d metres out of the wall (negative = into it). basis maps local
-    x = along, y = outward, z = up, so MeshBuilder.box(size=(w, depth, h))
-    lies flat on the wall."""
-
-    def __init__(self, a, b, z0, height):
-        a, b = Vector((a[0], a[1], 0)), Vector((b[0], b[1], 0))
-        self.u = (b - a).normalized()
-        self.n = Vector((self.u.y, -self.u.x, 0))  # outward for CCW polygons
-        self.L = (b - a).length
-        self.H = height
-        self.p0 = a + Vector((0, 0, z0))
-        self.basis = Matrix((self.u, self.n, Z)).transposed()
-
-    @classmethod
-    def from_frame(cls, origin, u, n, length, height):
-        f = cls.__new__(cls)
-        f.u, f.n, f.L, f.H = Vector(u), Vector(n), length, height
-        f.p0 = Vector(origin)
-        f.basis = Matrix((f.u, f.n, Z)).transposed()
-        return f
-
-    def at(self, s, t, d=0.0):
-        return self.p0 + self.u * s + Z * t + self.n * d
-
-
-def rect(hw, hd):
-    """CCW rectangle footprint with half width (x) and half depth (y)."""
-    return [(hw, -hd), (hw, hd), (-hw, hd), (-hw, -hd)]
-
-
-def octagon(hw, chamfer):
-    """CCW square footprint with chamfered corners."""
-    c = chamfer
-    return [(hw, -hw + c), (hw, hw - c), (hw - c, hw), (-hw + c, hw),
-            (-hw, hw - c), (-hw, -hw + c), (-hw + c, -hw), (hw - c, -hw)]
-
-
-def inset(polygon, amount):
-    """Shrink a convex CCW polygon by moving every edge inward by `amount`."""
-    n = len(polygon)
-    lines = []
-    for i in range(n):
-        a, b = Vector(polygon[i]), Vector(polygon[(i + 1) % n])
-        u = (b - a).normalized()
-        normal = Vector((u.y, -u.x))
-        lines.append((a - normal * amount, u))
-    out = []
-    for i in range(n):
-        (p1, d1), (p2, d2) = lines[i - 1], lines[i]
-        den = d1.x * d2.y - d1.y * d2.x
-        t = ((p2.x - p1.x) * d2.y - (p2.y - p1.y) * d2.x) / den
-        q = p1 + d1 * t
-        out.append((q.x, q.y))
-    return out
 
 
 # ================================================================== materials
@@ -586,13 +543,15 @@ def panel_lines(obj, panel_size=0.4, seam=0.01, depth=0.006, raised=0.15, seed=0
 
 
 def greeble(target, builder, count=120, size=(0.04, 0.25), height=(0.01, 0.12),
-            seed=0, facing=None, kinds=("box", "box", "cyl", "stack")):
+            seed=0, facing=None, kinds=("box", "box", "cyl", "stack"), embed=0.012):
     """Place `count` small parts on the surface of `target` into `builder`.
 
     Parts are boxes, cylinders (along the normal) or stepped stacks, aligned to
     the face normal, sized in metres. `facing=(0, 0, 1), 0.7` restricts them to
     faces whose normal points within ~45 deg of that direction (e.g. only the
-    top). Area-weighted, so big faces get more parts."""
+    top). Area-weighted, so big faces get more parts. Every part sinks
+    `embed` metres into the surface, so it is attached, not resting on it."""
+    bpy.context.view_layer.update()      # matrix_world is stale right after moving the target
     rng = random.Random(seed)
     polys = list(target.data.polygons)
     if facing is not None:
@@ -607,13 +566,14 @@ def greeble(target, builder, count=120, size=(0.04, 0.25), height=(0.01, 0.12),
         w = rng.uniform(*size)
         h = rng.uniform(*height)
         kind = rng.choice(kinds)
+        builder.tag = f"greeble on {target.name}"
         if kind == "cyl":
-            builder.cyl(p, p + n * h, w / 2, segments=12)
+            builder.cyl(p - n * embed, p + n * h, w / 2, segments=12)
         elif kind == "stack":
-            builder.box(p + n * (h / 2), (w, w * rng.uniform(0.5, 1.2), h), basis)
-            builder.box(p + n * (h + h / 4), (w * 0.6, w * 0.4, h / 2), basis)
+            builder.box(p + n * ((h - embed) / 2), (w, w * rng.uniform(0.5, 1.2), h + embed), basis)
+            builder.box(p + n * (h + h / 4 - embed / 2), (w * 0.6, w * 0.4, h / 2 + embed), basis)
         else:
-            builder.box(p + n * (h / 2), (w, w * rng.uniform(0.3, 1.5), h), basis)
+            builder.box(p + n * ((h - embed) / 2), (w, w * rng.uniform(0.3, 1.5), h + embed), basis)
     return count
 
 
@@ -621,7 +581,9 @@ def scatter_instances(target, source, count=50, scale=(0.7, 1.3), align=True,
                       seed=0, facing=None, offset=0.0, collection=None):
     """Spread linked duplicates of `source` over `target`'s surface (cheap:
     they share one mesh). Random spin around the normal and random scale.
+    Use a small negative `offset` to sink them into the surface.
     Returns the new objects."""
+    bpy.context.view_layer.update()      # matrix_world is stale right after moving the target
     rng = random.Random(seed)
     polys = list(target.data.polygons)
     if facing is not None:
@@ -703,175 +665,3 @@ def cable(p0, p1, sag=0.15, radius=0.01, material=None, name="Cable"):
     return obj
 
 
-# ================================================================ facade kit
-class FacadeKit:
-    """Builders + materials for panelised facades. Pass `materials` to restyle
-    (keys: panels, core, frames, glass, warm, cool, dim, off, blinds, pipes,
-    vents, light_warm, light_cool, light_red, strip)."""
-
-    def __init__(self, seed=0, skin=0.6, materials=None, prefix=""):
-        self.rng = random.Random(seed)
-        self.skin = skin  # panels sit this far in front of the core
-        mats = {
-            "panels": panel_metal(prefix + "PanelMetal"),
-            "core": simple(prefix + "Core", (0.008, 0.008, 0.01), rough=0.7),
-            "frames": simple(prefix + "Frames", (0.03, 0.032, 0.035), rough=0.35, metal=0.8),
-            "glass": glass(prefix + "Glass"),
-            "warm": interior(prefix + "RoomWarm", (1.0, 0.62, 0.3), 3.5),
-            "cool": interior(prefix + "RoomCool", (0.55, 0.75, 1.0), 2.5),
-            "dim": interior(prefix + "RoomDim", (1.0, 0.7, 0.45), 0.5),
-            "off": simple(prefix + "RoomOff", (0.01, 0.01, 0.012), rough=0.8),
-            "blinds": simple(prefix + "Blinds", (0.5, 0.48, 0.45), rough=0.5),
-            "pipes": simple(prefix + "Pipes", (0.06, 0.065, 0.07), rough=0.4, metal=1.0),
-            "vents": simple(prefix + "Vents", (0.015, 0.015, 0.017), rough=0.5, metal=0.7),
-            "light_warm": emissive(prefix + "LightWarm", (1.0, 0.75, 0.45), 60),
-            "light_cool": emissive(prefix + "LightCool", (0.75, 0.9, 1.0), 50),
-            "light_red": emissive(prefix + "LightRed", (1.0, 0.05, 0.02), 80),
-            "strip": emissive(prefix + "Strip", (0.9, 0.95, 1.0), 12),
-        }
-        mats.update(materials or {})
-        bevels = {"panels": 0.025, "frames": 0.01, "blinds": 0.005, "vents": 0.008}
-        self.b = {k: MeshBuilder(prefix + k.title(), m, bevels.get(k, 0.0)) for k, m in mats.items()}
-        self.rooms = {k: self.b[k] for k in ("warm", "cool", "dim", "off")}
-
-    def __getattr__(self, key):  # kit.panels, kit.frames, ... -> builders
-        b = self.__dict__.get("b", {})
-        if key in b:
-            return b[key]
-        raise AttributeError(key)
-
-    def finish(self):
-        """Create one object per material. Returns the list of objects."""
-        return [o for o in (mb.finish() for mb in self.b.values()) if o]
-
-    # ------------------------------------------------------------ cells
-    def window(self, f, s, t, w, h, lit_weights=(30, 12, 18, 40)):
-        """Recessed window centred at (s, t): frame, mullion, optional transom,
-        thin glass, protruding sill, a room (lit or off) with a ceiling light,
-        and partly lowered blinds in some."""
-        B, rng, skin = f.basis, self.rng, self.skin
-        fw = 0.1
-        for cs, ct, sw, sh in ((s, t + h / 2 - fw / 2, w, fw), (s, t - h / 2 + fw / 2, w, fw),
-                               (s - w / 2 + fw / 2, t, fw, h), (s + w / 2 - fw / 2, t, fw, h)):
-            self.frames.box(f.at(cs, ct, 0.05), (sw, 0.3, sh), B)
-        self.frames.box(f.at(s, t, -0.05), (0.06, 0.12, h - 2 * fw), B)
-        if rng.random() < 0.4:
-            self.frames.box(f.at(s, t + h * 0.18, -0.05), (w - 2 * fw, 0.1, 0.05), B)
-        self.glass.box(f.at(s, t, -0.12), (w - 2 * fw, 0.02, h - 2 * fw), B)
-        self.frames.box(f.at(s, t - h / 2 - 0.05, 0.12), (w + 0.2, 0.36, 0.08), B)
-        state = rng.choices(["warm", "cool", "dim", "off"], weights=lit_weights)[0]
-        self.rooms[state].box(f.at(s, t, -skin + 0.04), (w - 0.05, 0.02, h - 0.05), B)
-        if state in ("warm", "cool"):
-            self.light_warm.box(f.at(s, t + h / 2 - 0.12, -skin * 0.6), (w * 0.6, 0.12, 0.03), B)
-        if state != "off" and rng.random() < 0.45:
-            for k in range(int(h * rng.uniform(0.2, 0.9) / 0.09)):
-                self.blinds.box(f.at(s, t + h / 2 - fw - 0.05 - k * 0.09, -0.3),
-                                (w - 2 * fw - 0.04, 0.06, 0.012), B)
-        return state
-
-    def panel(self, f, s, t, w, h, gap=0.07, light_prob=0.16):
-        """Cladding panel reaching back to the core (seams = dark channels),
-        random relief, sometimes split, with hatches, louvres and lights."""
-        B, rng, skin = f.basis, self.rng, self.skin
-        depth = 0.22 + (0.25 if rng.random() < 0.12 else rng.uniform(0, 0.08))
-        cd = (depth - skin) / 2
-        if rng.random() < 0.35:
-            for k in (-1, 1):
-                self.panels.box(f.at(s + k * w / 4, t, cd), (w / 2 - gap, depth + skin, h - gap), B)
-        else:
-            self.panels.box(f.at(s, t, cd), (w - gap, depth + skin, h - gap), B)
-        r = rng.random()
-        if r < 0.08:
-            self.vents.box(f.at(s, t, depth + 0.02), (w * 0.4, 0.04, h * 0.5), B)
-            self.frames.box(f.at(s + w * 0.12, t, depth + 0.06), (0.04, 0.05, 0.2), B)
-        elif r < 0.14:
-            for k in range(6):
-                self.vents.box(f.at(s, t - 0.3 + k * 0.12, depth + 0.03), (w * 0.5, 0.06, 0.03), B)
-        if rng.random() < light_prob:
-            lights = self.light_warm if rng.random() < 0.7 else self.light_cool
-            lights.dot(f.at(s + rng.choice((-1, 1)) * (w / 2 - 0.15), t + h / 2 - 0.15, depth + 0.05), 0.05)
-
-    def vent_bank(self, f, s, t, w, h):
-        B = f.basis
-        self.vents.box(f.at(s, t, 0.1 - self.skin / 2), (w - 0.1, 0.2 + self.skin, h - 0.1), B)
-        for k in range(int(h / 0.15)):
-            self.vents.box(f.at(s, t - h / 2 + 0.12 + k * 0.15, 0.25), (w - 0.25, 0.12, 0.04), B)
-
-    def fin(self, f, s, light_every=3.0, light_prob=0.75):
-        """Full-height vertical fin with a chain of small lights on its edge."""
-        self.panels.box(f.at(s, f.H / 2, 0.6), (0.35, 1.2, f.H - 0.2), f.basis)
-        for k in range(int(f.H / light_every)):
-            if self.rng.random() < light_prob:
-                self.light_warm.dot(f.at(s, light_every / 2 + k * light_every, 1.25), 0.07)
-
-    def pipe_run(self, f, t, d, radius, flange_every=4.0, margin=0.3):
-        """Horizontal pipe along a wall (ends `margin` inside the wall's ends so
-        runs on neighbouring walls don't cross at the corners), with flanges and
-        saddle brackets."""
-        self.pipes.cyl(f.at(margin, t, d), f.at(f.L - margin, t, d), radius, segments=16)
-        s = flange_every / 2
-        while s < f.L:
-            self.pipes.cyl(f.at(s - 0.08, t, d), f.at(s + 0.08, t, d), radius * 1.25, segments=16)
-            self.vents.box(f.at(s, t - radius - 0.15, d * 0.5), (0.15, d, 0.1), f.basis)
-            s += flange_every
-
-    def panelize(self, f, col_w=3.0, row_h=2.0, window_ratio=0.25, strip_prob=0.25,
-                 vent_ratio=0.05, fins_every=3):
-        """Fill a Face with cells. Structure beats noise: whole columns become
-        glazing strips (`strip_prob`), the rest is mostly panels with some
-        windows and vents; fins every `fins_every` columns on long walls."""
-        rng = self.rng
-        nc, nr = max(1, round(f.L / col_w)), max(1, round(f.H / row_h))
-        cw, rh = f.L / nc, f.H / nr
-        strips = {i for i in range(nc) if rng.random() < strip_prob}
-        for i in range(nc):
-            for j in range(nr):
-                s, t = (i + 0.5) * cw, (j + 0.5) * rh
-                r = rng.random()
-                if (i in strips and j % 2 == 1) or r < window_ratio * 0.4:
-                    self.window(f, s, t, cw - 0.15, rh - 0.2)
-                elif r < window_ratio * 0.4 + vent_ratio:
-                    self.vent_bank(f, s, t, cw, rh)
-                else:
-                    self.panel(f, s, t, cw, rh)
-        if fins_every and f.L > 10:
-            for i in range(fins_every, nc, fins_every):
-                self.fin(f, i * cw)
-
-
-def facade_segment(kit, polygon, z0, z1, slab=True, **panelize_args):
-    """One storey block: dark core prism + every wall panelised + slab edge
-    with a light strip on top. `polygon` is the CCW outer footprint."""
-    kit.core.prism(inset(polygon, kit.skin), z0, z1)
-    n = len(polygon)
-    for i in range(n):
-        f = Face(polygon[i], polygon[(i + 1) % n], z0, z1 - z0)
-        kit.panelize(f, **panelize_args)
-        if slab:
-            top = Face(polygon[i], polygon[(i + 1) % n], z1 - 0.5, 0.5)
-            kit.panels.box(top.at(top.L / 2, 0.25, 0.3), (top.L + 0.3, 0.9, 0.5), top.basis)
-            kit.strip.box(top.at(top.L / 2, -0.05, 0.76), (top.L * 0.9, 0.04, 0.05), top.basis)
-
-
-def mech_floor(kit, polygon, z0, z1, max_out=1.6):
-    """Recessed plant floor: core, pipe runs, vent banks and small lights.
-    Pass a polygon 2-3 m smaller than the storeys around it; nothing sticks out
-    more than `max_out` metres from it, so pipes stay inside the silhouette.
-    Pipe sizes scale with the floor height."""
-    kit.core.prism(polygon, z0, z1)
-    n = len(polygon)
-    for i in range(n):
-        f = Face(polygon[i], polygon[(i + 1) % n], z0, z1 - z0)
-        if f.L < 6:
-            continue
-        for r, d, t in ((0.06, 0.35, 0.22), (0.035, 0.7, 0.45), (0.08, 0.95, 0.68), (0.03, 0.3, 0.86)):
-            radius = r * f.H
-            depth = min(d * max_out, max_out - radius)
-            kit.pipe_run(f, t * f.H, depth, radius)
-        s = 3.0
-        while s < f.L - 2:
-            kit.vent_bank(f, s, f.H * 0.55, 2.2, f.H * 0.5)
-            s += 7.0
-        for k in range(1, int(f.L), 2):
-            if kit.rng.random() < 0.5:
-                kit.light_warm.dot(f.at(k, f.H - 0.3, 0.3), 0.07)

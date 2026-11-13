@@ -41,6 +41,8 @@ jobs:
         run: python tests/run_snippets.py
       - name: Check lighting preset calibration
         run: python tests/test_lighting_presets.py
+      - name: Check attachment and audit
+        run: python tests/test_assembly.py
       - name: Run boilerplate demo (render + QA)
         shell: bash   # bash shell = -eo pipefail, so a crash isn't hidden by tee
         run: |

@@ -24,7 +24,7 @@ workflow and the rules behind it.
 3. Techniques by subject
 4. detail_kit: general tools
 5. Example: hard-surface prop
-6. Example: architecture (FacadeKit)
+6. Example: architecture (architecture.py)
 7. Writing your own detail parts
 8. Calibration tables
 9. Performance
@@ -100,6 +100,9 @@ previews early; the final render is the last step.
 
 ## 2. Rules that separate detail from primitives
 
+- **Parts are attached, not placed.** Every part sits on a Frame of its parent
+  and sinks slightly into it; `assembly.audit()` must report nothing detached
+  (assembly.md). Detail that floats or misses its wall looks worse than no detail.
 - **Openings are recesses, not painted shapes.** A window, port, vent or screen
   has a frame, depth and something behind it (a room, a fan, a grille, a glow).
   Never a flat emissive rectangle on a surface.
@@ -127,7 +130,7 @@ previews early; the final render is the last step.
 | Subject | Primary | Secondary | Tertiary | Materials |
 |---|---|---|---|---|
 | Hard-surface machines, vehicles, sci-fi props, robots | boxes/cylinders, bevelled; booleans for big cut-outs | `panel_lines`, hatches, vents as recesses, ribs, plates | `greeble`, bolts (`MeshBuilder.dot`/`cyl`), pipes, `cable` | `worn_paint`, `panel_metal`, rubber, glass |
-| Buildings, facades, interiors | prisms per storey, setbacks | `FacadeKit` cells: panels with seams, recessed windows with rooms, slabs | vents, pipes, lights, signs, AC units | `panel_metal`, `concrete`, `glass`, `interior` |
+| Buildings, facades, interiors | prisms per storey, setbacks | `architecture.FacadeKit` cells: panels with seams, recessed windows with rooms, slabs | vents, pipes, lights, signs, AC units | `panel_metal`, `concrete`, `glass`, `interior` |
 | Rocks, cliffs, terrain | displaced meshes (`rock`), grids with displace | layered displacement (big lumps + small chips), strata | `scatter_instances` of pebbles/debris, moss decals | `rock_material`, dirt, wet variants |
 | Furniture & wooden props | boxes and planks at real sizes | plank seams, joints, mouldings, handles | nails/screws, chips, scratches | `wood`, metal fittings |
 | Organic / natural (plants, trees) | curves with bevel, skin modifier, subdivision | branching, leaves as instanced planes | `scatter_instances` | leaf/bark materials with variation |
@@ -154,7 +157,8 @@ textures (organic surfaces).
 | `cable(p0, p1, sag, radius)` | hanging cable, hose or wire |
 | `apply_modifiers(obj)` | bake modifiers before sharing a mesh between instances |
 | materials | `worn_paint`, `panel_metal`, `concrete`, `wood`, `rock_material`, `glass`, `wet_asphalt`, `emissive`, `interior`, `simple`, `city_windows` |
-| architecture | `Face`, `rect`, `octagon`, `inset`, `FacadeKit`, `facade_segment`, `mech_floor` |
+| attachment (`assembly.py`) | `Frame`, `block`, `rod`, `outline`, `text_on`, `stack`, `audit` (see assembly.md) |
+| architecture (`architecture.py`) | `wall`/`shell`, `window`, `plug`, `room`, `rect`, `octagon`, `FacadeKit`, `facade_segment`, `mech_floor` |
 
 ---
 
@@ -168,7 +172,9 @@ cable. Builds in well under a second.
 import sys, math
 sys.path.insert(0, "/path/to/skill/blender/scripts")
 import bpy, bmesh
+import assembly as asm
 import detail_kit as dk
+from assembly import Frame, block, rod
 
 me = bpy.data.meshes.new("Hull")
 bm = bmesh.new()
@@ -178,7 +184,7 @@ bm.to_mesh(me)
 bm.free()
 hull = bpy.data.objects.new("Hull", me)
 bpy.context.scene.collection.objects.link(hull)
-hull.location.z = 0.75
+hull.location.z = 0.55                               # box is 1.1 m high: it stands on the floor
 
 dk.subdivide(hull, cuts=10)                          # faces smaller than the panels
 dk.panel_lines(hull, panel_size=0.35, seam=0.012, depth=0.008, seed=2)
@@ -192,10 +198,12 @@ dk.greeble(hull, parts, count=90, facing=((0, 0, 1), 0.7), seed=4)            # 
 dk.greeble(hull, parts, count=60, size=(0.03, 0.15), height=(0.005, 0.05),
            facing=((0, -1, 0), 0.7), seed=5)                                   # front
 pipes = dk.MeshBuilder("Pipes", dk.simple("Chrome", (0.8, 0.8, 0.82), rough=0.2, metal=1.0))
-for k, z in enumerate((0.45, 0.6, 1.0)):
-    pipes.cyl((-1.25, -0.75, z), (1.25, -0.75, z), 0.03 + 0.01 * k, segments=16)
-    for x in (-1.0, 0.0, 1.0):                                                 # flanges
-        pipes.cyl((x, -0.7, z), (x, -0.76, z), 0.05 + 0.01 * k, segments=16)
+front = Frame.of_object(hull, "-Y")                  # attach pipes to the hull, not to typed coordinates
+for k, t in enumerate((0.25, 0.4, 0.8)):
+    r = 0.03 + 0.01 * k
+    rod(pipes, front, -0.05, t, front.w + 0.05, t, r, d=0.06, label="pipe")
+    for s in (0.2, 1.2, 2.2):                                                  # stand-offs into the hull
+        block(pipes, front.centered(0.08, 0.08, s=s, t=t), out=0.06, label="pipe stand-off")
 parts.finish()
 pipes.finish()
 
@@ -208,9 +216,13 @@ floor = bpy.data.objects.new("Floor", gme)
 bpy.context.scene.collection.objects.link(floor)
 floor.data.materials.append(dk.concrete("FloorConcrete", tone=(0.18, 0.24)))
 pebble = dk.rock("Pebble", radius=0.12, seed=1)
-pebble.location = (0, 0, -50)                         # template, out of view
+pebble.hide_render = True                             # template only; the instances are rendered
 dk.scatter_instances(floor, pebble, count=40, scale=(0.5, 1.6), seed=7, offset=0.02)
-dk.cable((1.25, 0.3, 1.2), (2.35, 1.6, 1.85), sag=0.25, radius=0.02)
+side = Frame.of_object(hull, "+X")
+dk.cable(side.at(0.7, 0.9, -0.02), (2.4, 1.6, -0.01), sag=0.25, radius=0.02)   # from the hull to the floor
+
+report = asm.audit(anchors=("Floor*",))               # everything must be attached, down to the floor
+assert report["ok"]
 ```
 
 Light it with `lighting_presets.apply_preset("studio")` and frame it with
@@ -218,7 +230,7 @@ Light it with `lighting_presets.apply_preset("studio")` and frame it with
 
 ---
 
-## 6. Example: architecture (FacadeKit)
+## 6. Example: architecture (architecture.py)
 
 Facades are a special case of the same rules: cells on a module, real depth,
 something behind every opening. `FacadeKit` builds panels with seams down to a
@@ -228,62 +240,66 @@ room behind), vent banks and fins with lights.
 ```python
 import sys
 sys.path.insert(0, "/path/to/skill/blender/scripts")
-import detail_kit as dk
+import architecture as arch
 
-kit = dk.FacadeKit(seed=3)                              # builders + default materials
-dk.facade_segment(kit, dk.octagon(12, 3), 0, 16)        # storeys: core, cells, slab strip
-dk.mech_floor(kit, dk.octagon(10, 2.5), 16, 21)         # recessed plant floor, pipes
-dk.facade_segment(kit, dk.rect(10, 8), 21, 37, window_ratio=0.5)
+kit = arch.FacadeKit(seed=3)                              # builders + default materials
+arch.facade_segment(kit, arch.octagon(12, 3), 0, 16)        # storeys: core, cells, slab strip
+arch.mech_floor(kit, arch.octagon(10, 2.5), 16, 21)         # recessed plant floor, pipes
+arch.facade_segment(kit, arch.rect(10, 8), 21, 37, window_ratio=0.5)
 objects = kit.finish()                                  # one object per material
 print(len(objects), "objects,", sum(len(o.data.polygons) for o in objects), "faces")
 ```
 
 - Footprints are CCW 2D polygons: `rect(half_w, half_d)`, `octagon(half_w,
-  chamfer)` or your own; `inset(polygon, metres)` shrinks one.
-- `panelize(face, col_w, row_h, window_ratio, strip_prob, vent_ratio,
-  fins_every)` sets the facade rhythm.
-- Openings are built **from parts around the opening** (frame pieces, sill,
-  glass, room) rather than by cutting a boolean hole per window: hundreds of
-  booleans are slow and fragile. The same applies to ports, vents and screens
-  on any object.
-- Restyle with `FacadeKit(materials={"panels": dk.concrete()})`.
+  chamfer)` or your own; any angles, the walls are mitred at the corners.
+- `facade_segment(kit, polygon, z0, z1, col_w=, row_h=, window_ratio=,
+  strip_prob=, vent_ratio=, fins_every=)` sets the facade rhythm;
+  `kit.panelize(frame, ...)` does one wall (an `assembly.Frame`).
+- The kit builds a real wall with a hole per window (`architecture.shell`), fits
+  the window into the hole and attaches panels, vents and fins to the wall
+  surface, so the result passes `assembly.audit()`. Never cut one boolean per
+  window: hundreds of booleans are slow and fragile.
+- Restyle with `FacadeKit(materials={"panels": detail_kit.concrete()})`.
 - Background buildings: `dk.city_windows()` on simple boxes, in fog.
+- For shopfronts, doors, signs, canopies and street scenes, build directly
+  with `architecture.py` + `assembly.py`; see `examples/neon_street.py`.
 
 ---
 
 ## 7. Writing your own detail parts
 
-When nothing in the kit fits what the reference shows, write a part on top of
-`MeshBuilder` and a local frame. `Face` gives a frame on a vertical wall
-(`at(s, t, d)` = along, up, out; `basis` orients boxes), `Face.from_frame()` on
-any plane; for curved surfaces use per-polygon frames as `greeble` does.
+When nothing in the kit fits what the reference shows, write a part with
+`assembly.block`/`rod` on a **Frame** of its parent (see assembly.md), so it is
+attached by construction, and check it with `audit()`.
 
 ```python
-import detail_kit as dk
+import architecture as arch
+import assembly as asm
+from assembly import Frame, block, rod
 
-kit = dk.FacadeKit(seed=5)
-wall = dk.Face((-6, -4), (6, -4), 0, 9)          # 12 m wall facing -Y, 9 m high
+kit = arch.FacadeKit(seed=5)
+wall = Frame.wall((-6, -4), (6, -4), 0, 9, "south wall")     # 12 m wall facing -Y, 9 m high
 
-def balcony(kit, f, s, t, w=3.0, depth=1.4):
-    """Slab + front edge light + railing posts and top rail, at (s, t) on wall f."""
-    B = f.basis
-    kit.panels.box(f.at(s, t, depth / 2), (w, depth, 0.18), B)
-    kit.strip.box(f.at(s, t - 0.1, depth + 0.01), (w * 0.9, 0.02, 0.03), B)
-    for k in range(int(w / 0.25) + 1):
-        x = s - w / 2 + k * 0.25
-        kit.frames.cyl(f.at(x, t + 0.09, depth - 0.05), f.at(x, t + 1.05, depth - 0.05), 0.015, 6)
-    kit.frames.cyl(f.at(s - w / 2, t + 1.05, depth - 0.05),
-                   f.at(s + w / 2, t + 1.05, depth - 0.05), 0.03, 8)
+def balcony(kit, wall, s, t, w=3.0, depth=1.4):
+    """Slab standing out of the wall + edge light + railing posts and top rail."""
+    slab = block(kit.panels, wall.sub(s - w / 2, t, w, 0.18, "balcony"), out=depth)
+    block(kit.strip, slab.front.inset(0.15, 0.15, 0.05, 0.05), out=0.02, label="balcony light")
+    deck = slab.top                                           # u along the wall, v from the edge to the wall
+    for post in deck.inset(0.05, 0.05, 0.03, deck.h - 0.07).columns(int(w / 0.25), gap=0.21):
+        block(kit.frames, post, out=1.0, label="railing post")
+    rod(kit.frames, deck, 0.03, 0.05, deck.w - 0.03, 0.05, 0.03, d=1.0, label="railing top")
 
 kit.panelize(wall, col_w=3.0, row_h=3.0, window_ratio=0.6)
 for s in (1.5, 7.5):
     balcony(kit, wall, s, 3.0)
 kit.finish()
+assert asm.audit()["ok"]
 ```
 
-Checklist for a new part: real thickness, sizes in metres from the module, a
-bevel-friendly builder, at least one smaller sub-detail (rail, bolt, light,
-label), and randomness only where it would vary in reality.
+Checklist for a new part: placed on a parent frame (no typed world
+coordinates), real thickness, sizes in metres from the module, at least one
+smaller sub-detail (rail, bolt, light, label), randomness only where it would
+vary in reality, and a clean audit.
 
 ---
 
@@ -352,6 +368,7 @@ All values tested in Cycles with AgX at exposure 0 (Blender 5.x).
 
 | What happened | Fix |
 |---|---|
+| Windows floated off the walls, blinds and frames touched nothing | Build on parent frames, fit windows into `architecture.wall()` openings, run `assembly.audit()` |
 | Windows were flat white emissive rectangles | Recesses with something behind them; interior strength 2–3.5; 30–60 % lit |
 | Panels on a regular grid looked like bricks/tiles | Vary panel sizes inside the module (`panel_lines` does) |
 | A 3 cm bevel turned 1 cm seams into rounded blocks | Bevel narrower than the seam, angle limit ~80° |
